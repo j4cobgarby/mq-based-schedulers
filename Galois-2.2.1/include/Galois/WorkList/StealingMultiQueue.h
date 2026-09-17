@@ -2,6 +2,7 @@
 #define GALOIS_STEALINGMULTIQUEUE_H
 
 #include <atomic>
+#include <cstring>
 #include <cstdlib>
 #include <memory>
 #include <vector>
@@ -45,8 +46,16 @@ public:
   }
 
   //! Checks whether the element is "null".
+  //! Compares only the node field. The original `element == dummy` also compares
+  //! the priority, which for the all-0xff sentinel is NaN once the priority is
+  //! floating point -- and NaN never equals itself, so the test silently never
+  //! fired and sentinel slots were processed as real tasks. A memcmp over the
+  //! whole struct is not a fix either: member-wise assignment need not copy
+  //! padding bytes, so two logically identical sentinels can differ. The node
+  //! field is integral or a pointer in every instantiation, so comparing it
+  //! alone is both exact and padding-proof.
   static bool isDummy(T const& element) {
-    return element == dummy;
+    return element.n == dummy.n;
   }
 
   //! Gets current version of the stealing buffer.

@@ -262,7 +262,10 @@ public:
   template<typename T>
   T* structureFromArrays(uint64_t* outIdxs, uint64_t numNodes,
       uint32_t* outs, uint64_t numEdges) {
-    return reinterpret_cast<T*>(structureFromArrays(outIdx, numNodes, outs, numEdges, sizeof(T)));
+    // Was `outIdx`, this class's own (still null) member, rather than the
+    // `outIdxs` argument. Nothing in the tree called this template, so the
+    // typo went unnoticed; it segfaults as soon as anything does.
+    return reinterpret_cast<T*>(structureFromArrays(outIdxs, numNodes, outs, numEdges, sizeof(T)));
   }
 
   /** 

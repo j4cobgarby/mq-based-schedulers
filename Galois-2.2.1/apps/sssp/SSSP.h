@@ -33,9 +33,47 @@
 #include <string>
 #include <sstream>
 #include <stdint.h>
+#include <cstring>
 
+// Weight type as stored in the graph file, and the type distances are computed
+// in. Built both ways so the harness can address <binary>-int32 / <binary>-float,
+// matching how the graph files themselves are typed.
+#ifdef USE_FLOAT
+typedef float wsg_weight_type;
+typedef float Dist;
+static const Dist DIST_INFINITY = std::numeric_limits<Dist>::max() / 2 - 1;
+#else
+typedef int32_t wsg_weight_type;
 typedef unsigned long Dist;
 static const Dist DIST_INFINITY = std::numeric_limits<Dist>::max() - 1;
+#endif
+
+// The value actually stored in a node. The integer build packs a work counter
+// (see trackWork in SSSP.cpp) into the high 32 bits of the 64-bit distance
+// word, so a distance is read back by narrowing to the low half; the float
+// build stores the distance on its own and needs no unpacking. Casting through
+// DistVal is what the original `(unsigned int)` casts were doing.
+#ifdef USE_FLOAT
+typedef Dist DistVal;
+#else
+typedef unsigned int DistVal;
+#endif
+
+// Compare-and-swap on a distance. The integer builds swap the value directly.
+// For float we swap the bit pattern instead, since the atomic builtins reject
+// floating-point operands; SSSP distances are non-negative, and IEEE-754 orders
+// non-negative floats identically to their bit patterns, so this is exact.
+inline bool casDist(Dist* addr, Dist expected, Dist desired) {
+#ifdef USE_FLOAT
+  static_assert(sizeof(Dist) == sizeof(uint32_t), "float Dist is expected to be 32-bit");
+  uint32_t e, d;
+  std::memcpy(&e, &expected, sizeof(e));
+  std::memcpy(&d, &desired, sizeof(d));
+  return __sync_bool_compare_and_swap(reinterpret_cast<uint32_t*>(addr), e, d);
+#else
+  return __sync_bool_compare_and_swap(addr, expected, desired);
+#endif
+}
 
 template<typename GrNode>
 struct UpdateRequestCommon {

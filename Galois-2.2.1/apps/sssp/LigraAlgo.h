@@ -57,7 +57,7 @@ struct LigraAlgo: public Galois::LigraGraphChi::ChooseExecutor<UseGraphChi> {
         Dist oldDist = ddata.dist;
         if (oldDist <= newDist)
           return false;
-        if (__sync_bool_compare_and_swap(&ddata.dist, oldDist, newDist)) {
+        if (casDist(&ddata.dist, oldDist, newDist)) {
           return __sync_bool_compare_and_swap(&ddata.visited, false, true);
         }
       }

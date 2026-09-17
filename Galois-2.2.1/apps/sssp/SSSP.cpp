@@ -39,12 +39,18 @@
 #include <set>
 #include <fstream>
 #include <atomic>
+#include <chrono>
+#include <iomanip>
+#include <vector>
+#include <cmath>
+#include <type_traits>
 
 #include "SSSP.h"
 #include "GraphLabAlgo.h"
 #include "LigraAlgo.h"
 
 #include "chunk_size.h"
+#include "WsgGraph.h"
 
 #ifdef GEM5
 #include "m5op.h"
@@ -76,6 +82,15 @@ static cll::opt<unsigned int> startNode("startNode", cll::desc("Node to start se
 static cll::opt<unsigned int> reportNode("reportNode", cll::desc("Node to report distance to"), cll::init(1));
 static cll::opt<int> stepShift("delta", cll::desc("Shift value for the deltastep"), cll::init(10));
 static cll::opt<std::string> mqSuff("suff", cll::desc("Suffix for amq or smq"), cll::init(""));
+// Added for the relax-experiments harness: run several sources per invocation,
+// taken from the same .sources file the other implementations read, so every
+// implementation is measured on identical source vertices.
+static cll::opt<std::string> sourcesFile("sfile", cll::desc("File of source nodes, one per line; overrides startNode"), cll::init(""));
+static cll::opt<unsigned int> numSources("sources", cll::desc("Number of sources to run from sfile"), cll::init(1));
+static cll::opt<unsigned int> numRounds("rounds", cll::desc("Number of trials per source"), cll::init(1));
+// Opt-in rather than reusing -noverify: llvm::cl rejects a repeated option, so
+// the harness cannot pass a default and then override it.
+static cll::opt<bool> verifyEach("verifyeach", cll::desc("Verify the result after each source"), cll::init(false));
 cll::opt<unsigned int> memoryLimit("memoryLimit",
                                    cll::desc("Memory limit for out-of-core algorithms (in MB)"), cll::init(~0U));
 static cll::opt<Algo> algo("algo", cll::desc("Choose an algorithm:"),
@@ -105,7 +120,7 @@ struct not_visited {
   not_visited(Graph& g): g(g) { }
 
   bool operator()(typename Graph::GraphNode n) const {
-    return (unsigned int)g.getData(n).dist >= (unsigned int)DIST_INFINITY;
+    return (DistVal)g.getData(n).dist >= (DistVal)DIST_INFINITY;
   }
 };
 
@@ -122,12 +137,12 @@ struct not_consistent<Graph, typename std::enable_if<!Galois::Graph::is_segmente
   not_consistent(Graph& g): g(g) { }
 
   bool operator()(typename Graph::GraphNode n) const {
-    Dist dist = (unsigned int)g.getData(n).dist;
-    if (dist == (unsigned int)DIST_INFINITY)
+    Dist dist = (DistVal)g.getData(n).dist;
+    if (dist == (DistVal)DIST_INFINITY)
       return false;
 
     for (typename Graph::edge_iterator ii = g.edge_begin(n), ee = g.edge_end(n); ii != ee; ++ii) {
-      Dist ddist = (unsigned int)g.getData(g.getEdgeDst(ii)).dist;
+      Dist ddist = (DistVal)g.getData(g.getEdgeDst(ii)).dist;
       Dist w = g.getEdgeData(ii);
       if (ddist > dist + w) {
         //std::cout << ddist << " " << dist + w << " " << n << " " << g.getEdgeDst(ii) << "\n"; // XXX
@@ -153,19 +168,28 @@ struct max_dist {
   }
 };
 
+// A shift cannot bucket a floating-point priority, so divide by 2^shift
+// instead. Only the OBIM/PMOD-family worklists use these; the SMQ orders purely
+// by Comparer and never reaches here.
 template<typename UpdateRequest>
 struct UpdateRequestIndexer: public std::unary_function<UpdateRequest, unsigned int> {
   unsigned int operator() (const UpdateRequest& val) const {
-    unsigned int t = val.w >> stepShift;
-    return t;
+    if constexpr (std::is_floating_point<Dist>::value) {
+      return (unsigned int)(val.w / std::pow(2.0f, (float)stepShift));
+    } else {
+      return (unsigned int)(val.w >> stepShift);
+    }
   }
 };
 
 template<typename UpdateRequest, size_t N>
 struct ParameterizedUpdateRequestIndexer: public std::unary_function<UpdateRequest, unsigned int> {
   unsigned int operator() (const UpdateRequest& val) const {
-    unsigned int t = val.w >> N;
-    return t;
+    if constexpr (std::is_floating_point<Dist>::value) {
+      return (unsigned int)(val.w / std::pow(2.0f, (float)N));
+    } else {
+      return (unsigned int)(val.w >> N);
+    }
   }
 };
 
@@ -255,14 +279,27 @@ void readInOutGraph(Graph& graph) {
   }
 }
 
+//! The harness hands us GAP serialized graphs (.wsg) so that every
+//! implementation reads the identical file; .gr is still accepted.
+template <typename Graph>
+static void readSsspGraph(Graph& graph) {
+  if (isWsgFilename(filename)) {
+    // wsg_weight_type is the type stored in the file, which is a property of
+    // the graph on disk, not of the type this algorithm computes distances in.
+    readWsgGraph<Graph, typename Graph::edge_data_type, wsg_weight_type>(graph, filename);
+  } else {
+    Galois::Graph::readGraph(graph, filename);
+  }
+}
+
 struct SerialAlgo {
-  typedef Galois::Graph::LC_CSR_Graph<SNode, uint32_t>
+  typedef Galois::Graph::LC_CSR_Graph<SNode, wsg_weight_type>
   ::with_no_lockable<true>::type Graph;
   typedef Graph::GraphNode GNode;
   typedef UpdateRequestCommon<GNode> UpdateRequest;
 
   std::string name() const { return "Serial"; }
-  void readGraph(Graph& graph) { Galois::Graph::readGraph(graph, filename); }
+  void readGraph(Graph& graph) { readSsspGraph(graph); }
 
   struct Initialize {
     Graph& g;
@@ -307,7 +344,7 @@ template<bool UseCas>
 struct AsyncAlgo {
   typedef SNode Node;
 
-  typedef Galois::Graph::LC_InlineEdge_Graph<Node, uint32_t>
+  typedef Galois::Graph::LC_InlineEdge_Graph<Node, wsg_weight_type>
   ::template with_out_of_line_lockable<true>::type
   ::template with_compressed_node_ptr<true>::type
 #ifdef GEM5
@@ -323,13 +360,13 @@ struct AsyncAlgo {
     return UseCas ? "Asynchronous with CAS" : "Asynchronous";
   }
 
-  void readGraph(Graph& graph) { Galois::Graph::readGraph(graph, filename); }
+  void readGraph(Graph& graph) { readSsspGraph(graph); }
 
   struct Initialize {
     Graph& g;
     Initialize(Graph& g): g(g) { }
     void operator()(typename Graph::GraphNode n) {
-      g.getData(n, Galois::MethodFlag::NONE).dist = (unsigned int)DIST_INFINITY;
+      g.getData(n, Galois::MethodFlag::NONE).dist = (DistVal)DIST_INFINITY;
     }
   };
 
@@ -338,10 +375,14 @@ struct AsyncAlgo {
     GNode dst = graph.getEdgeDst(ii);
     Dist d = graph.getEdgeData(ii);
     Node& ddata = graph.getData(dst, Galois::MethodFlag::NONE);
-    Dist newDist = (unsigned int)sdata.dist + d;
+    Dist newDist = (DistVal)sdata.dist + d;
     Dist oldDist;
-    while (newDist < (unsigned int)(oldDist = ddata.dist)) {
+    while (newDist < (DistVal)(oldDist = ddata.dist)) {
+#ifdef USE_FLOAT
+      if (!UseCas || casDist(&ddata.dist, oldDist, newDist)) {
+#else
       if (!UseCas || __sync_bool_compare_and_swap(&ddata.dist, oldDist, newDist | (oldDist & 0xffffffff00000000ul))) {
+#endif
         if (!UseCas)
           ddata.dist = newDist;
         pusher.push(UpdateRequest(dst, newDist));
@@ -359,7 +400,7 @@ struct AsyncAlgo {
 
     *nNodesProcessed += 1;
 
-    if (req.w != (unsigned int)*sdist) {
+    if (req.w != (DistVal)*sdist) {
       if (trackWork) {
         *nEmpty += 1;
         *WLEmptyWork += pusher.t.stopwatch();
@@ -367,7 +408,7 @@ struct AsyncAlgo {
       return;
     }
     for (typename Graph::edge_iterator ii = graph.edge_begin(req.n, flag), ei = graph.edge_end(req.n, flag); ii != ei; ++ii) {
-      if (req.w != (unsigned int)*sdist) {
+      if (req.w != (DistVal)*sdist) {
         *nBad += nEdge;
         *nOverall += nEdge;
         *BadWork += pusher.u + pusher.t.sample();
@@ -378,6 +419,10 @@ struct AsyncAlgo {
       *nEdgesProcessed+=1;
     }
 
+#ifndef USE_FLOAT
+    // Skipped for float: this accounting stores a work counter in the high 32
+    // bits of the distance word, which a 32-bit float has no room for. It only
+    // feeds the nBad/BadWork statistics, which the harness does not read.
     if (trackWork) {
       Dist oldDist = sdata.dist;
       unsigned int oldWork = (oldDist >> 32);
@@ -390,7 +435,7 @@ struct AsyncAlgo {
       }
       // Record work spent this iteration.  If CAS fails, then this
       // iteration was bad.
-      if ((unsigned int)oldDist < req.w ||
+      if ((DistVal)oldDist < req.w ||
           !__sync_bool_compare_and_swap(&sdata.dist, oldDist, req.w | ((pusher.u + pusher.t.sample()) << 32))) {
         // We need to undo our prior accounting of bad work to avoid
         // double counting.
@@ -403,6 +448,7 @@ struct AsyncAlgo {
       }
 
     }
+#endif
   }
 
   struct Process {
@@ -616,7 +662,7 @@ struct AsyncAlgo {
 struct AsyncAlgoPP {
   typedef SNode Node;
 
-  typedef Galois::Graph::LC_InlineEdge_Graph<Node, uint32_t>
+  typedef Galois::Graph::LC_InlineEdge_Graph<Node, wsg_weight_type>
   ::with_out_of_line_lockable<true>::type
   ::with_compressed_node_ptr<true>::type
   ::with_numa_alloc<true>::type
@@ -628,7 +674,7 @@ struct AsyncAlgoPP {
     return "Asynchronous with CAS and Push and pull";
   }
 
-  void readGraph(Graph& graph) { Galois::Graph::readGraph(graph, filename); }
+  void readGraph(Graph& graph) { readSsspGraph(graph); }
 
   struct Initialize {
     Graph& g;
@@ -647,7 +693,7 @@ struct AsyncAlgoPP {
     Dist oldDist;
     if (newDist < (oldDist = ddata.dist)) {
       do {
-        if (__sync_bool_compare_and_swap(&ddata.dist, oldDist, newDist)) {
+        if (casDist(&ddata.dist, oldDist, newDist)) {
           if (trackWork && oldDist != DIST_INFINITY)
           {
             *BadWork += 1;
@@ -732,6 +778,59 @@ struct does_not_need_aborts<AsyncAlgo<true>::Process> : public boost::true_type 
 
 static_assert(Galois::does_not_need_aborts<AsyncAlgo<true>::Process>::value, "Oops");
 
+//! Reads the harness's .sources file: one node id per line, plain text.
+//! Falls back to the single -startNode when no file is given.
+static std::vector<unsigned int> readSourceIds(size_t graphSize) {
+  std::vector<unsigned int> sources;
+
+  if (sourcesFile.empty()) {
+    sources.push_back(startNode);
+    return sources;
+  }
+
+  std::ifstream in(sourcesFile.c_str());
+  if (!in) {
+    std::cerr << "Could not open sources file " << sourcesFile << "\n";
+    abort();
+  }
+
+  unsigned int s;
+  while (sources.size() < numSources && in >> s) {
+    if (s >= graphSize) {
+      std::cerr << "Source " << s << " out of range for a graph of " << graphSize << " nodes; "
+                << "the sources file does not match this graph\n";
+      abort();
+    }
+    sources.push_back(s);
+  }
+
+  if (sources.size() < numSources) {
+    std::cerr << "Sources file " << sourcesFile << " holds only " << sources.size()
+              << " usable sources, " << numSources << " requested\n";
+    abort();
+  }
+  return sources;
+}
+
+//! Printed after every trial so that a node-numbering mismatch between this
+//! graph format and the one other implementations read shows up immediately
+//! rather than as quietly different numbers.
+template<typename Graph>
+static void reportReach(Graph& graph) {
+  size_t reached = 0;
+  DistVal maxDist = 0;
+  for (typename Graph::iterator ii = graph.begin(), ee = graph.end(); ii != ee; ++ii) {
+    DistVal d = (DistVal)graph.getData(*ii).dist;
+    if (d >= (DistVal)DIST_INFINITY)
+      continue;
+    ++reached;
+    if (d > maxDist)
+      maxDist = d;
+  }
+  std::cout << "Reached " << reached << " nodes, max dist "
+            << std::setprecision(6) << maxDist << std::endl;
+}
+
 template<typename Algo>
 void run(bool prealloc = true) {
   typedef typename Algo::Graph Graph;
@@ -749,50 +848,63 @@ void run(bool prealloc = true) {
     Galois::preAlloc(numThreads + 3 * approxNodeData / Galois::Runtime::MM::pageSize);
   Galois::reportPageAlloc("MeminfoPre");
 
+  std::vector<unsigned int> sourceIds = readSourceIds(graph.size());
+
   Galois::StatTimer T;
   std::cout << "Running " << algo.name() << " version\n";
-  T.start();
-  time_t start,end;
-  time (&start);
-
-#ifdef GEM5
-  m5_dumpreset_stats(0,0);
-#endif
-
-  // ROI
-  Galois::do_all_local(graph, typename Algo::Initialize(graph));
-  algo(graph, source);
-
-#ifdef GEM5
-  m5_dumpreset_stats(0,0);
-#endif
-
-  T.stop();
-  time (&end);
-  double dif = difftime (end,start);
 
   std::ofstream out(amqResultFile + mqSuff, std::ios::app);
-  out << T.get() << ",";
-  out.close();
 
-  printf ("Elapsed time is %.2lf seconds.\n", dif );
+  for (size_t si = 0; si < sourceIds.size(); ++si) {
+    typename Graph::iterator sit = graph.begin();
+    std::advance(sit, sourceIds[si]);
+    source = *sit;
+    std::cout << "\nsource = " << sourceIds[si] << std::endl;
+
+    for (unsigned int round = 0; round < numRounds; ++round) {
+      T.start();
+      std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
+
+#ifdef GEM5
+      m5_dumpreset_stats(0,0);
+#endif
+
+      // ROI
+      Galois::do_all_local(graph, typename Algo::Initialize(graph));
+      algo(graph, source);
+
+#ifdef GEM5
+      m5_dumpreset_stats(0,0);
+#endif
+
+      std::chrono::steady_clock::time_point end = std::chrono::steady_clock::now();
+      T.stop();
+
+      double seconds = std::chrono::duration<double>(end - begin).count();
+      std::cout << "External Trial Time: " << std::fixed << std::setprecision(6) << seconds << std::endl;
+      out << (unsigned long)(seconds * 1000.0) << ",";
+
+      reportReach(graph);
+    }
+
+    if (verifyEach) {
+      if (verify(graph, source)) {
+        std::cout << "Verification successful.\n";
+      } else {
+        std::cerr << "Verification failed.\n";
+        abort();
+      }
+    }
+  }
+
+  out.close();
 
   Galois::reportPageAlloc("MeminfoPost");
 #ifndef GEM5
   Galois::Runtime::reportNumaAlloc("NumaPost");
 #endif
 
-  std::cout << "Node " << reportNode << " has distance " << (unsigned int)graph.getData(report).dist << "\n";
-
-  if (!skipVerify) {
-    if (verify(graph, source)) {
-      std::cout << "Verification successful.\n";
-    } else {
-      std::cerr << "Verification failed.\n";
-      assert(0 && "Verification failed");
-      abort();
-    }
-  }
+  std::cout << "Node " << reportNode << " has distance " << (DistVal)graph.getData(report).dist << "\n";
 }
 
 uint64_t getStatVal(Galois::Statistic* value) {
