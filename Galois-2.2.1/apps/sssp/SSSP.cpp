@@ -81,6 +81,7 @@ static cll::opt<bool> symmetricGraph("symmetricGraph", cll::desc("Input graph is
 static cll::opt<unsigned int> startNode("startNode", cll::desc("Node to start search from"), cll::init(0));
 static cll::opt<unsigned int> reportNode("reportNode", cll::desc("Node to report distance to"), cll::init(1));
 static cll::opt<int> stepShift("delta", cll::desc("Shift value for the deltastep"), cll::init(10));
+static cll::opt<int> stealProb("stealp", cll::desc("Steal probability"), cll::init(3));
 static cll::opt<std::string> mqSuff("suff", cll::desc("Suffix for amq or smq"), cll::init(""));
 // Added for the relax-experiments harness: run several sources per invocation,
 // taken from the same .sources file the other implementations read, so every
@@ -105,7 +106,7 @@ static cll::opt<Algo> algo("algo", cll::desc("Choose an algorithm:"),
                            clEnumValEnd), cll::init(Algo::asyncWithCas));
 static cll::opt<std::string> worklistname("wl", cll::desc("Worklist to use"), cll::value_desc("worklist"), cll::init("obim"));
 
-static const bool trackWork = true;
+static const bool trackWork = false;
 static Galois::Statistic* BadWork;
 static Galois::Statistic* WLEmptyWork;
 static Galois::Statistic* nBad;
@@ -175,7 +176,8 @@ template<typename UpdateRequest>
 struct UpdateRequestIndexer: public std::unary_function<UpdateRequest, unsigned int> {
   unsigned int operator() (const UpdateRequest& val) const {
     if constexpr (std::is_floating_point<Dist>::value) {
-      return (unsigned int)(val.w / std::pow(2.0f, (float)stepShift));
+      static float delta = std::pow(2.0f, (float)stepShift);
+      return (unsigned int)(val.w / delta);
     } else {
       return (unsigned int)(val.w >> stepShift);
     }
@@ -409,9 +411,11 @@ struct AsyncAlgo {
     }
     for (typename Graph::edge_iterator ii = graph.edge_begin(req.n, flag), ei = graph.edge_end(req.n, flag); ii != ei; ++ii) {
       if (req.w != (DistVal)*sdist) {
-        *nBad += nEdge;
-        *nOverall += nEdge;
-        *BadWork += pusher.u + pusher.t.sample();
+        if (trackWork) {
+          *nBad += nEdge;
+          *nOverall += nEdge;
+          *BadWork += pusher.u + pusher.t.sample();
+        }
         return;
       }
       relaxEdge(graph, sdata, ii, pusher);
@@ -562,7 +566,7 @@ struct AsyncAlgo {
     else if (wl == "pmod")
       Galois::for_each_local(initial, Process(this, graph), Galois::wl<ADAPOBIM>());
 
-#define RUN_WL(WL) Galois::for_each_local(initial, Process(this, graph), Galois::wl<WL>())
+#define RUN_WL(...) Galois::for_each_local(initial, Process(this, graph), Galois::wl<__VA_ARGS__>())
 
 #define priority_t Dist
 #define element_t UpdateRequest
@@ -653,8 +657,24 @@ struct AsyncAlgo {
     if (worklistname == "pq")
       Galois::for_each_local(initial, Process(this, graph), Galois::wl<USUAL_PQ>());
 
-    typedef StealingMultiQueue<element_t, Comparer, 8, 8, true> smq_default;
-    if (wl == "smq_default") RUN_WL(smq_default);
+    int sp = 1 << stealProb;
+    if (wl == "smq") {
+      std::cout << "Running SMQ with stealing probability 1/" << sp << "\n";
+      switch (stealProb) {
+        case 0:  RUN_WL(StealingMultiQueue<element_t, Comparer, 1 << 0, 8, true>);break;
+        case 1:  RUN_WL(StealingMultiQueue<element_t, Comparer, 1 << 1, 8, true>);break;
+        case 2:  RUN_WL(StealingMultiQueue<element_t, Comparer, 1 << 2, 8, true>);break;
+        case 3:  RUN_WL(StealingMultiQueue<element_t, Comparer, 1 << 3, 8, true>);break;
+        case 4:  RUN_WL(StealingMultiQueue<element_t, Comparer, 1 << 4, 8, true>);break;
+        case 5:  RUN_WL(StealingMultiQueue<element_t, Comparer, 1 << 5, 8, true>);break;
+        case 6:  RUN_WL(StealingMultiQueue<element_t, Comparer, 1 << 6, 8, true>);break;
+        case 7:  RUN_WL(StealingMultiQueue<element_t, Comparer, 1 << 7, 8, true>);break;
+        case 8:  RUN_WL(StealingMultiQueue<element_t, Comparer, 1 << 8, 8, true>);break;
+        case 9:  RUN_WL(StealingMultiQueue<element_t, Comparer, 1 << 9, 8, true>);break;
+        case 10: RUN_WL(StealingMultiQueue<element_t, Comparer, 1 << 10, 8, true>);break;
+        default: RUN_WL(StealingMultiQueue<element_t, Comparer, 1 << 3, 8, true>);
+      }
+    }
 
   }
 };
