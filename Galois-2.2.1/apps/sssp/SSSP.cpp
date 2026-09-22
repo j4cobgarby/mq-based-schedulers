@@ -400,7 +400,8 @@ struct AsyncAlgo {
     volatile Dist* sdist = &sdata.dist;
     int nEdge = 0;
 
-    *nNodesProcessed += 1;
+    if (trackWork)
+      *nNodesProcessed += 1;
 
     if (req.w != (DistVal)*sdist) {
       if (trackWork) {
@@ -420,7 +421,8 @@ struct AsyncAlgo {
       }
       relaxEdge(graph, sdata, ii, pusher);
       nEdge++;
-      *nEdgesProcessed+=1;
+      if (trackWork)
+        *nEdgesProcessed += 1;
     }
 
 #ifndef USE_FLOAT
