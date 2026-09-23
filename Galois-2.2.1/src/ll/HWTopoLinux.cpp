@@ -40,6 +40,7 @@
 #include <cstdio>
 #include <cstring>
 #include <cerrno>
+#include <fstream>
 
 #include <sched.h>
 
@@ -107,7 +108,7 @@ static std::vector<cpuinfo> parseCPUInfo() {
     return vals; //Shouldn't get here
   }
 
-  const int len = 1024;
+  const int len = 8192;
   char* line = (char*)malloc(len);
   int cur = -1;
 
@@ -138,78 +139,63 @@ static std::vector<cpuinfo> parseCPUInfo() {
 //! Returns physical ids in current cpuset
 std::vector<int> parseCPUSet() {
   std::vector<int> vals;
-  vals.reserve(64);
 
-  // Do not open /proc/self/cpuset in Gem5
-#ifndef GEM5
-  //PARSE: /proc/self/cpuset
-  FILE* f = fopen(sCPUSet, "r");
-  if (!f) {
+  std::ifstream data("/proc/self/status");
+
+  if (!data) {
     return vals;
   }
 
-  const int len = 1024;
-  char* path = (char*)malloc(len);
-  path[0] = '/';
-  path[1] = '\0';
-  if (!fgets(path, len, f)) {
-    fclose(f);
-    return vals;
-  }
-  fclose(f);
-
-  if(char* t = index(path, '\n'))
-    *t = '\0';
-
-  if (strlen(path) == 1) {
-    free(path);
-    return vals;
-  }
-
-  char* path2 = (char*)malloc(len);
-  strcpy(path2, "/dev/cpuset");
-  strcat(path2, path);
-  strcat(path2, "/cpus");
-
-  f = fopen(path2, "r");
-  if (!f) {
-    free(path2);
-    free(path);
-    GALOIS_SYS_DIE("failed opening ", path2);
-    return vals; //Shouldn't get here
-  }
-
-  //reuse path
-  char* np = path;
-  if (!fgets(np, len, f)) {
-    fclose(f);
-    return vals;
-  }
-  while (np && strlen(np)) {
-    char* c = index(np, ',');  
-    if (c) { //slice string at comma (np is old string, c is next string
-      *c = '\0';
-      ++c;
+  std::string line;
+  std::string prefix("Cpus_allowed_list:");
+  bool found = false;
+  while (true) {
+    std::getline(data, line);
+    if (!data) {
+      return vals;
     }
-    
-    char* d = index(np, '-');
-    if (d) { //range
-      *d = '\0';
-      ++d;
-      int b = atoi(np);
-      int e = atoi(d);
-      while (b <= e)
-	vals.push_back(b++);
-    } else { //singleton
-      vals.push_back(atoi(np));
+
+    if (line.compare(0, prefix.size(), prefix) == 0) {
+      found = true;
+      break;
     }
-    np = c;
-  };
-  
-  fclose(f);
-  free(path2);
-  free(path);
-#endif
+  }
+
+  if (!found) {
+    return vals;
+  }
+
+  line = line.substr(prefix.size());
+
+  size_t current;
+  size_t next = -1;
+  try {
+    do {
+      current  = next + 1;
+      next     = line.find_first_of(',', current);
+      auto buf = line.substr(current, next - current);
+      if (!buf.empty()) {
+        size_t dash = buf.find_first_of('-', 0);
+        if (dash != std::string::npos) { // range
+          auto first  = buf.substr(0, dash);
+          auto second = buf.substr(dash + 1, std::string::npos);
+          unsigned b  = std::stoi(first.data());
+          unsigned e  = std::stoi(second.data());
+          while (b <= e) {
+            vals.push_back(b++);
+          }
+        } else { // singleton
+          vals.push_back(std::stoi(buf.data()));
+        }
+      }
+    } while (next != std::string::npos);
+  } catch (const std::invalid_argument&) {
+    return std::vector<int>{};
+  } catch (const std::out_of_range&) {
+    return std::vector<int>{};
+  }
+
+
   return vals;
 }
 
@@ -260,11 +246,11 @@ struct AutoLinuxPolicy {
   AutoLinuxPolicy() {
     std::vector<cpuinfo> vals = parseCPUInfo();
     virtmap = parseCPUSet();
-
+    
     if (virtmap.empty()) {
       //1-1 mapping for non-cpuset using systems
       for (unsigned i = 0; i < vals.size(); ++i)
-	virtmap.push_back(i);
+      virtmap.push_back(i);
     }
 
     if (EnvCheck("GALOIS_DEBUG_TOPO"))
