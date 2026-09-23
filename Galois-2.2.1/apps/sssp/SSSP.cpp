@@ -49,7 +49,6 @@
 #include "GraphLabAlgo.h"
 #include "LigraAlgo.h"
 
-#include "chunk_size.h"
 #include "WsgGraph.h"
 
 #ifdef GEM5
@@ -495,13 +494,13 @@ struct AsyncAlgo {
 
     using namespace Galois::WorkList;
     typedef UpdateRequestIndexer<UpdateRequest> Indexer;
-    typedef dChunkedFIFO<CHUNK_SIZE> Chunk;
+    typedef dChunkedFIFO<64> Chunk;
 //    typedef dVisChunkedFIFO<64> visChunk;
 //    typedef dChunkedPTFIFO<1> noChunk;
 //    typedef ChunkedFIFO<64> globChunk;
 //    typedef ChunkedFIFO<1> globNoChunk;
     typedef OrderedByIntegerMetric<UpdateRequestIndexer<UpdateRequest>, Chunk, 10> OBIM;
-    typedef AdaptiveOrderedByIntegerMetric<UpdateRequestIndexer<UpdateRequest>, Chunk, 10, true, false, CHUNK_SIZE> ADAPOBIM;
+    typedef AdaptiveOrderedByIntegerMetric<UpdateRequestIndexer<UpdateRequest>, Chunk, 10, true, false, 64> ADAPOBIM;
 //    typedef OrderedByIntegerMetric<UpdateRequestIndexer<UpdateRequest>, dChunkedLIFO<64>, 10> OBIM_LIFO;
 //    typedef OrderedByIntegerMetric<UpdateRequestIndexer<UpdateRequest>, Chunk, 4> OBIM_BLK4;
 //    typedef OrderedByIntegerMetric<UpdateRequestIndexer<UpdateRequest>, Chunk, 10, false> OBIM_NOBSP;
@@ -560,20 +559,20 @@ struct AsyncAlgo {
     graph.out_edges(source, Galois::MethodFlag::NONE).end(),
     InitialProcess(this, graph, initial, graph.getData(source)));
     std::string wl = worklistname;
-    if (!mqSuff.empty()) {
-      mqSuff = "_" + mqSuff;
-    }
-    if (wl == "obim")
-      Galois::for_each_local(initial, Process(this, graph), Galois::wl<OBIM>());
-    else if (wl == "pmod")
-      Galois::for_each_local(initial, Process(this, graph), Galois::wl<ADAPOBIM>());
+
+    // if (!mqSuff.empty()) {
+    //   mqSuff = "_" + mqSuff;
+    // }
+    // if (wl == "obim")
+    //   Galois::for_each_local(initial, Process(this, graph), Galois::wl<OBIM>());
+    // else if (wl == "pmod")
+    //   Galois::for_each_local(initial, Process(this, graph), Galois::wl<ADAPOBIM>());
 
 #define RUN_WL(...) Galois::for_each_local(initial, Process(this, graph), Galois::wl<__VA_ARGS__>())
 
 #define priority_t Dist
 #define element_t UpdateRequest
     typedef UpdateRequestIndexer<UpdateRequest> Indexer;
-#include "Experiments.h"
 
 //    else if (wl == "slobim")
 //      Galois::for_each_local(initial, Process(this, graph), Galois::wl<SLOBIM>());
@@ -605,46 +604,46 @@ struct AsyncAlgo {
 //      Galois::for_each_local(initial, Process(this, graph), Galois::wl<OBIM_GLOB>());
 //    else if (wl == "obim-glob-nochunk")
 //      Galois::for_each_local(initial, Process(this, graph), Galois::wl<OBIM_GLOB_NOCHUNK>());
-    if (wl == "skiplist")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<GPQ>());
-    else if (wl == "spraylist")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<SL>());
-    else if (wl == "mq1")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<MQ1>());
-    else if (wl == "mq2")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<MQ2>());
-    else if (wl == "mq3")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<MQ3>());
-    else if (wl == "mq4")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<MQ4>());
-    else if (wl == "mq5")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<MQ5>());
-    else if (wl == "hmq1")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ1>());
-    else if (wl == "hmq2")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ2>());
-    else if (wl == "hmq3")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ3>());
-    else if (wl == "hmq4")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ4>());
-    else if (wl == "hmq5")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ5>());
-    else if (wl == "hmq6")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ6>());
-    else if (wl == "hmq7")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ7>());
-    else if (wl == "hmq8")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ8>());
+    // if (wl == "skiplist")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<GPQ>());
+    // else if (wl == "spraylist")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<SL>());
+    // else if (wl == "mq1")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<MQ1>());
+    // else if (wl == "mq2")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<MQ2>());
+    // else if (wl == "mq3")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<MQ3>());
+    // else if (wl == "mq4")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<MQ4>());
+    // else if (wl == "mq5")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<MQ5>());
+    // else if (wl == "hmq1")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ1>());
+    // else if (wl == "hmq2")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ2>());
+    // else if (wl == "hmq3")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ3>());
+    // else if (wl == "hmq4")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ4>());
+    // else if (wl == "hmq5")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ5>());
+    // else if (wl == "hmq6")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ6>());
+    // else if (wl == "hmq7")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ7>());
+    // else if (wl == "hmq8")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HMQ8>());
 //    else if (wl == "thrskiplist")
 //      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<PTSL>());
 //    else if (wl == "pkgskiplist")
 //      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<PPSL>());
 //    else if (wl == "lpq")
 //      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<LPQ>());
-    else if (wl == "swarm")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<SWARMPQ>());
-    else if (wl == "heapswarm")
-      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HSWARMPQ>());
+    // else if (wl == "swarm")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<SWARMPQ>());
+    // else if (wl == "heapswarm")
+    //   Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<HSWARMPQ>());
 //    else if (wl == "ppq")
 //      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<PPQ>());
 //    else if (wl == "klsm256")
@@ -655,9 +654,9 @@ struct AsyncAlgo {
 //      Galois::for_each_local(initial, ProcessWithBreaks(this, graph), Galois::wl<kLSM4m>());
 //    else
 //      std::cerr << "No work list!" << "\n";
-    typedef MyPQ<UpdateRequest, Comparer, true> USUAL_PQ;
-    if (worklistname == "pq")
-      Galois::for_each_local(initial, Process(this, graph), Galois::wl<USUAL_PQ>());
+    // typedef MyPQ<UpdateRequest, Comparer, true> USUAL_PQ;
+    // if (worklistname == "pq")
+    //   Galois::for_each_local(initial, Process(this, graph), Galois::wl<USUAL_PQ>());
 
     int sp = 1 << stealProb;
     if (wl == "smq") {
@@ -875,7 +874,7 @@ void run(bool prealloc = true) {
   Galois::StatTimer T;
   std::cout << "Running " << algo.name() << " version\n";
 
-  std::ofstream out(amqResultFile + mqSuff, std::ios::app);
+  // std::ofstream out(amqResultFile + mqSuff, std::ios::app);
 
   for (size_t si = 0; si < sourceIds.size(); ++si) {
     typename Graph::iterator sit = graph.begin();
@@ -904,7 +903,7 @@ void run(bool prealloc = true) {
 
       double seconds = std::chrono::duration<double>(end - begin).count();
       std::cout << "External Trial Time: " << std::fixed << std::setprecision(6) << seconds << std::endl;
-      out << (unsigned long)(seconds * 1000.0) << ",";
+      // out << (unsigned long)(seconds * 1000.0) << ",";
 
       reportReach(graph);
     }
@@ -919,7 +918,7 @@ void run(bool prealloc = true) {
     }
   }
 
-  out.close();
+  // out.close();
 
   Galois::reportPageAlloc("MeminfoPost");
 #ifndef GEM5
@@ -973,10 +972,10 @@ int main(int argc, char **argv) {
     std::string wl = worklistname;
     if (wl.find("smq") == 0)
       wl = wl + mqSuff;
-    std::ofstream nodes(amqResultFile + mqSuff, std::ios::app);
-    nodes << wl << "," << getStatVal(nNodesProcessed) << ","
-          << Galois::Runtime::activeThreads << "," << stepShift << std::endl;
-    nodes.close();
+    // std::ofstream nodes(amqResultFile + mqSuff, std::ios::app);
+    // nodes << wl << "," << getStatVal(nNodesProcessed) << ","
+    //       << Galois::Runtime::activeThreads << "," << stepShift << std::endl;
+    // nodes.close();
 
     delete BadWork;
     delete WLEmptyWork;
