@@ -226,7 +226,7 @@ public:
   unsigned int size() const { return numNodes; }
 
   //! Returns the number of edges in the graph
-  unsigned int sizeEdges() const { return numEdges; }
+  uint64_t sizeEdges() const { return numEdges; }
 
   //! Returns the size of an edge
   size_t edgeSize() const { return sizeofEdge; }
