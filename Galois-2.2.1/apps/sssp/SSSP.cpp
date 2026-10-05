@@ -883,6 +883,8 @@ void run(bool prealloc = true) {
     std::cout << "\nsource = " << sourceIds[si] << std::endl;
 
     for (unsigned int round = 0; round < numRounds; ++round) {
+      Galois::do_all_local(graph, typename Algo::Initialize(graph));
+
       T.start();
       std::chrono::steady_clock::time_point begin = std::chrono::steady_clock::now();
 
@@ -891,7 +893,6 @@ void run(bool prealloc = true) {
 #endif
 
       // ROI
-      Galois::do_all_local(graph, typename Algo::Initialize(graph));
       algo(graph, source);
 
 #ifdef GEM5
